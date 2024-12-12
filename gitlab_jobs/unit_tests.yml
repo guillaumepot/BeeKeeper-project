@@ -1,0 +1,21 @@
+stages:
+  - unit_tests
+
+variables:
+  API_SRC_PATH: "src/api"
+  AIRFLOW_SRC_PATH: "src/airflow"
+
+# JOBS
+API_unit_tests:
+  stage: unit_tests
+  image: python:3.12
+  script:
+    - echo "Starting API unit tests..."
+    - cd $API_SRC_PATH
+    - pip install -r requirements.txt 
+    - pip install pytest pytest-asyncio
+    - cd ./code
+    - export PYTHONPATH=$(pwd)
+    - pytest -v ./unit_tests
+  only:
+    - /^build-.*$/

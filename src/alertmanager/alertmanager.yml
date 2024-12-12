@@ -1,0 +1,33 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: 'slack-notifications'
+  group_by: ['alertname']
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 15m
+
+receivers:
+  - name: 'slack-notifications'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/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'
+        channel: '#BeeM'
+        send_resolved: true
+        icon_url: 'https://avatars3.githubusercontent.com/u/3380462'
+        title: |-
+          [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}
+        text: |-
+          {{ range .Alerts -}}
+          *Alert:* {{ .Annotations.summary }} - `{{ .Labels.severity }}`
+
+          {{ if eq .Status "firing" }}
+          *Description:* {{ .Annotations.description_firing }}
+          {{ else }}
+          *Description:* {{ .Annotations.description_resolved }}
+          {{ end }}
+
+          *Details:*
+            {{ range .Labels.SortedPairs }} • *{{ .Name }}:* `{{ .Value }}`
+            {{ end }}
+          {{ end }}

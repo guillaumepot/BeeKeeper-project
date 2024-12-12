@@ -1,0 +1,10 @@
+stages:
+  - deploy
+
+
+deploy_job:
+  stage: deploy
+  script:
+    - echo "[TEST MESSAGE] Deploying application... "
+  only:
+    - main

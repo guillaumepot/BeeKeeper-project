@@ -1,0 +1,764 @@
+#utils/docker-compose.yaml
+
+# version: '3.8'
+
+  #---------------------- COMMON ENVS DECLARATION----------------------#
+
+x-common-env: &services-common-env
+  API_VERSION: ${API_VERSION}
+
+
+
+x-airflow-common: &airflow-common
+  image: ${GITLAB_REGISTRY_URL}/beem-airflow:latest
+  env_file: &airflow-common-env
+    - ${AIRFLOW_ENV_FILEPATH}
+  secrets:
+    - airflow_webserver_password
+  volumes: &airflow-common-volumes
+    - raw_data_volume:/opt/airflow/storage/raw_data
+    - processing_data_volume:/opt/airflow/storage/processing_data
+    - archives_data_volume:/opt/airflow/storage/archives_data
+    - cleaned_data_volume:/opt/airflow/storage/cleaned_data
+    - segmentation_data_volume:/opt/airflow/storage/segmentation_models
+    - mlflow-data-volume:/opt/airflow/storage/mlflow
+    - ${AIRFLOW_SOURCE_DIRECTORY}/code:/opt/airflow
+  user: "${AIRFLOW_UID}:0"
+  depends_on: &airflow-common-depends-on
+    beem-redis:
+      condition: service_healthy
+    airflow-postgres:
+      condition: service_healthy
+  profiles: &airflow-common-profiles
+    - airflow
+  networks: &airflow-common-networks
+    - beegis_airflow_network
+    - beegis_monitoring_network
+
+
+
+x-logging: &default-logging
+  driver: loki
+  options:
+    loki-url: 'http://localhost:3100/api/prom/push'
+    loki-pipeline-stages: |
+      - multiline:
+          firstline: '^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}:\d{2}'
+          max_wait_time: 3s
+      - regex:
+          expression: '^(?P<time>\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}:\d{2},\d{3}) (?P<message>(?s:.*))$$'
+
+services:
+  #---------------------- COMMON SERVICES----------------------#
+  beem-redis:
+    container_name: beem_redis
+    # image: redis:7.2.0
+    image: redis/redis-stack:latest
+    volumes:
+      - logs_directory_volume:/var/log/redis
+      - ${REDIS_SOURCE_DIRECTORY}/conf:/etc/redis_conf
+      - ${REDIS_SOURCE_DIRECTORY}/modules:/lib/redis_modules
+
+    command: [ "redis-server", "/etc/redis_conf/redis_7.2.conf" ]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 13s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped  
+    ports:
+      - '6379:6379'
+    profiles: ["api", "redis", "airflow"]
+    security_opt:
+      - no-new-privileges
+    privileged: false
+    read_only: false
+    networks:
+      - beegis_airflow_network
+      - beegis_critical_data_transit_network
+      - beegis_monitoring_network
+    labels:
+      com.example.description: "Redis cache for API"
+      com.example.department: "BeeGis"
+      
+
+  #---------------------- BEEGIS SERVICES----------------------#
+  beem-api:
+    container_name: beem_api
+    image: ${GITLAB_REGISTRY_URL}/beem-api:latest
+    build:
+      context: ../src/api
+      dockerfile: Dockerfile
+    environment:
+      <<: *services-common-env
+    env_file:
+      - ${API_ENV_FILEPATH}
+    secrets:
+      - JWT_secret_key
+      - postgres_api_password
+      - mongodb_api_password
+    volumes:
+      - logs_directory_volume:/app/logs
+      - ${API_SOURCE_DIRECTORY}/code:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/${API_VERSION}/status"]
+      interval: 300s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped  
+    ports:
+      - "8000:8000"
+    profiles: ["api"]
+    security_opt:
+      - no-new-privileges
+    privileged: false
+    read_only: false
+    networks:
+      - beegis_critical_data_transit_network
+      - beegis_public_network
+      - beegis_monitoring_network
+    logging: *default-logging
+    labels:
+      com.example.description: "Container using Python to run uvicorn server (API)"
+      com.example.department: "BeeGis"
+
+
+
+  beem-postgres:
+    container_name: postgres_beem
+    image: postgis/postgis:17-3.5-alpine
+    env_file:
+      - ${POSTGRES_ENV_FILEPATH}
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - ${POSTGRES_SOURCE_DIRECTORY}/conf:/docker-entrypoint-initdb.d
+      - postgres_data_volume:/var/lib/postgresql/data
+      # - logs_directory_volume/postgres:/app/logs # UPDATE THIS TO FIND WHERE POSTGRES LOGS ARE STORED IN THE CONTAINER
+    # ports:
+    #   - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped  
+    profiles: ["database", "postgres"]
+    security_opt:
+      - no-new-privileges
+    privileged: false
+    read_only: false
+    networks:
+      - beegis_critical_data_transit_network
+      - beegis_monitoring_network
+    labels:
+      com.example.description: "Container using PG Engine to run Postgres Database"
+      com.example.department: "BeeGis"
+
+
+
+  beem-mongodb:
+    container_name: mongodb_beem
+    image: mongo:7
+    env_file:
+      - ${MONGODB_ENV_FILEPATH}
+    environment:
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongodb_password
+    volumes:
+      - mongodb_data_volume:/data/db
+      # - logs_directory_volume:/var/log/mongodb
+      - ${MONGODB_SOURCE_DIRECTORY}/conf/init.js:/docker-entrypoint-initdb.d/init.js
+      - ${MONGODB_SOURCE_DIRECTORY}/conf/mongod.conf:/etc/mongod.conf
+    secrets:
+      - mongodb_password
+    # ports:
+    #   - "27017:27017"
+    command: ["mongod", "--config", "/etc/mongod.conf"]
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+      interval: 120s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+    profiles: ["database", "mongodb"]
+    security_opt:
+      - no-new-privileges
+    privileged: false
+    read_only: false
+    networks:
+      - beegis_critical_data_transit_network
+      - beegis_monitoring_network
+    labels:
+      com.example.description: "Container using MongoDB engine to run MongoDB Database"
+      com.example.department: "BeeGis"
+
+
+
+  beegis:
+    container_name: beegis
+    image: ${GITLAB_REGISTRY_URL}/beegis:latest
+    environment:
+      <<: *services-common-env
+    env_file:
+      - ${BEEGIS_ENV_FILEPATH}
+    secrets:
+      - beegi_api_password
+    volumes:
+      - ${BEEGIS_SOURCE_DIRECTORY}/code:/root/beegis
+    ports:
+      - "3838:3838"
+    profiles:
+      - beegis
+    networks:
+      - beegis_public_network
+    command: ["R", "-e", "shiny::runApp('/root/beegis/', launch.browser = FALSE, host = '0.0.0.0', port = 3838)"]    
+
+
+
+  mlflow-tracking-server:
+    container_name: beem_mlflow_tracking_server
+    image: ${GITLAB_REGISTRY_URL}/beem-mlflow-tracking:latest
+    env_file:
+      - ${MLFLOW_ENV_FILEPATH}
+    volumes:
+      - ${MLFLOW_SOURCE_DIRECTORY}/code:/app
+      - mlflow-data-volume:/app/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002"]
+      interval: 300s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped  
+    ports:
+      - "8002:8002"
+    profiles: ["mlflow"]
+    security_opt:
+      - no-new-privileges
+    privileged: false
+    read_only: false
+    networks:
+      - beegis_public_network
+    labels:
+      com.example.description: "Container using Python to run uvicorn server (MLFLOW)"
+      com.example.department: "BeeGis"
+
+
+
+  #---------------------- AIRFLOW ----------------------#
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        # Checks if the AIRFLOW_UID environment variable is set, warning if not. Important for Linux users to avoid file ownership issues.
+        if [[ -z "${AIRFLOW_UID}" ]]; then
+          echo
+          echo -e "\033[1;33mWARNING!!!: AIRFLOW_UID not set!\e[0m"
+          echo "If you are on Linux, you SHOULD follow the instructions below to set "
+          echo "AIRFLOW_UID environment variable, otherwise files will be owned by root."
+          echo "For other operating systems you can get rid of the warning with manually created .env file:"
+          echo "    See: https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html#setting-the-right-airflow-user"
+          echo
+        fi
+        # Checks system resources (memory, CPU, disk space) to ensure they meet Airflow's minimum requirements. Warns if they don't.
+        one_meg=1048576
+        mem_available=$$(($$(getconf _PHYS_PAGES) * $$(getconf PAGE_SIZE) / one_meg))
+        cpus_available=$$(grep -cE 'cpu[0-9]+' /proc/stat)
+        disk_available=$$(df / | tail -1 | awk '{print $$4}')
+        warning_resources="false"
+        if (( mem_available < 4000 )) ; then
+          echo
+          echo -e "\033[1;33mWARNING!!!: Not enough memory available for Docker.\e[0m"
+          echo "At least 4GB of memory required. You have $$(numfmt --to iec $$((mem_available * one_meg)))"
+          echo
+          warning_resources="true"
+        fi
+        if (( cpus_available < 2 )); then
+          echo
+          echo -e "\033[1;33mWARNING!!!: Not enough CPUS available for Docker.\e[0m"
+          echo "At least 2 CPUs recommended. You have $${cpus_available}"
+          echo
+          warning_resources="true"
+        fi
+        if (( disk_available < one_meg * 10 )); then
+          echo
+          echo -e "\033[1;33mWARNING!!!: Not enough Disk space available for Docker.\e[0m"
+          echo "At least 10 GBs recommended. You have $$(numfmt --to iec $$((disk_available * 1024 )))"
+          echo
+          warning_resources="true"
+        fi
+        if [[ $${warning_resources} == "true" ]]; then
+          echo
+          echo -e "\033[1;33mWARNING!!!: You have not enough resources to run Airflow (see above)!\e[0m"
+          echo "Please follow the instructions to increase amount of resources available:"
+          echo "   https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html#before-you-begin"
+          echo
+        fi
+
+        # Creates directories for logs, DAGs, and plugins, then sets the ownership to the AIRFLOW_UID user.
+        # This step is essential for ensuring that Airflow can access these directories.
+        mkdir -p /sources/logs /sources/dags /sources/plugins /sources/config
+        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins,config}
+
+        # Executes the Airflow version command to verify installation. This also implicitly checks if the Airflow entrypoint script is correctly configured.
+        exec /entrypoint airflow version
+    user: "0:0"
+
+
+
+  airflow-postgres:
+    container_name: airflow_postgres
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-postgres-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 30s
+      retries: 3
+      start_period: 30s
+    restart: always
+    profiles:
+      - airflow
+    networks:
+      - beegis_airflow_network
+
+  # Scheduler
+  airflow-scheduler:
+    container_name: airflow_scheduler_beem
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+
+  # Worker
+  airflow-worker:
+    # container_name: airflow_worker_beem
+    <<: *airflow-common
+    command: celery worker
+    #ports:
+    #  - "5000:5000"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - 'celery --app airflow.providers.celery.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}" || celery --app airflow.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}"'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    environment:
+      DUMB_INIT_SETSID: "0"
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+
+  # Triggerer
+  airflow-triggerer:
+    container_name: airflow_triggerer_beem
+    <<: *airflow-common
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+
+  airflow-webserver:
+    container_name: airflow_webserver_beem
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always 
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+
+  # Airflow CLI service
+  # airflow-cli:
+  #   container_name: airflow_cli_beem
+  #   <<: *airflow-common
+  #   profiles: ["airflow"]
+  #   environment:
+  #     <<: *airflow-common-env
+  #     CONNECTION_CHECK_MAX_COUNT: "0"
+  #   command:
+  #     - bash
+  #     - -c
+  #     - airflowk
+
+
+  #---------------------- MONITORING ----------------------#
+
+
+  loki:
+    image: grafana/loki:3.0.0
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - beegis_monitoring_network
+      - beegis_public_network
+    profiles: ["monitoring", "loki"]
+    ports:
+      - "3100:3100"
+    labels:
+      com.example.description: "Container using Loki engine"
+      com.example.department: "BeeGis"
+
+
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    ports:
+      - "9090:9090"
+    volumes:
+      - ${PROMETHEUS_SOURCE_DIRECTORY}:/workspace
+    command:
+      - --config.file=/workspace/prometheus.yml
+      - --enable-feature=exemplar-storage
+    depends_on:
+      - loki
+    logging: *default-logging
+    networks:
+      - beegis_airflow_network
+      - beegis_monitoring_network
+    profiles: ["monitoring", "prometheus"]
+    labels:
+      com.example.description: "Container using Prometheus engine"
+      com.example.department: "BeeGis"
+
+
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ${ALERTMANAGER_SOURCE_DIRECTORY}/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    networks:
+      - beegis_monitoring_network
+    profiles: ["monitoring", "alertmanager"]
+    labels:
+      com.example.description: "Container using Alertmanager engine"
+      com.example.department: "BeeGis"
+
+
+
+  tempo:
+    image: grafana/tempo:2.4.1
+    command: [ "--target=all", "--storage.trace.backend=local", "--storage.trace.local.path=/var/tempo", "--auth.enabled=false" ]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      - loki
+    logging: *default-logging
+    networks:
+      - beegis_monitoring_network
+      - beegis_public_network
+    profiles: ["monitoring", "tempo"]
+    labels:
+      com.example.description: "Container using Tempo engine"
+      com.example.department: "BeeGis"
+
+
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_INSTALL_PLUGINS=timomyl-breadcrumb-panel,natel-discrete-panel
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${GRAFANA_SOURCE_DIRECTORY}:/etc/grafana/provisioning/datasources
+      - ${GRAFANA_SOURCE_DIRECTORY}/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ${GRAFANA_SOURCE_DIRECTORY}/dashboards:/etc/grafana/dashboards
+    depends_on:
+      - loki
+      - prometheus
+    logging: *default-logging
+    networks:
+      - beegis_monitoring_network
+    profiles: ["monitoring", "grafana"]
+    labels:
+      com.example.description: "Container using Grafana engine"
+      com.example.department: "BeeGis"
+
+
+
+  mongodb-exporter:
+    image: percona/mongodb_exporter:0.40
+    container_name: mongodb-exporter
+    ports:
+      - "9216:9216" # Port par défaut pour exposer les métriques
+    environment:
+      MONGODB_URI: "mongodb://jag:beem_project@beem-mongodb:27017/admin"
+      COLLECT_DATABASES: "true"       # Facultatif : collecte des métriques de toutes les bases
+      COLLECT_REPLICASET: "true"      # Facultatif : collecte des métriques des réplicas
+      COLLECT_TOPMETRICS: "true"      # Facultatif : collecte des métriques des opérations top
+    command:
+        - "--collect-all"            # Active tous les collecteurs disponibles
+        - "--collector.profile"      # Active les métriques liées au profiler
+        - "--log.level=info"
+        - "--compatible-mode"
+    restart: unless-stopped
+    networks:
+      - beegis_monitoring_network
+    profiles: ["monitoring", "mongodb-exporter"]
+    labels:
+      com.example.description: "Container using MongoDB Exporter engine"
+      com.example.department: "BeeGis"
+
+
+
+  postgres-exporter:
+    image: wrouesnel/postgres_exporter
+    platform: linux/amd64
+    container_name: postgres_exporter
+    restart: unless-stopped
+    env_file:
+      - ${POSTGRES_EXPORTER_ENV_FILEPATH}
+    volumes:
+      - ${POSTGRES_EXPORTER_SOURCE_DIRECTORY}/conf:/docker-entrypoint-initdb.d
+    ports:
+      - "9187:9187"
+    profiles: ["monitoring", "postgres-exporter"]
+    networks:
+      - beegis_monitoring_network
+    labels:
+      com.example.description: "Container using Postgres Exporter engine"
+      com.example.department: "BeeGis"
+  
+
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis_exporter
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=beem-redis:6379
+    # depends_on:
+    #   - beem-redis
+    profiles: ["monitoring", "redis-exporter"]
+    networks:
+      - beegis_monitoring_network
+    labels:
+      com.example.description: "Container using Redis Exporter engine"
+      com.example.department: "BeeGis"
+
+
+
+  statsd-exporter:
+    image: prom/statsd-exporter
+    container_name: statsd_exporter
+    ports:
+      - "9102:9102"
+      - "8125:8125/udp"
+    volumes:
+      - "${STATSD_EXPORTER_SOURCE_DIRECTORY}/conf/statsd_mapping.yml:/tmp/statsd_mapping.yml"
+    command:
+      - "--statsd.mapping-config=/tmp/statsd_mapping.yml"
+      - "--statsd.listen-udp=:8125"
+      - "--web.listen-address=:9102"
+    profiles: ["monitoring", "statsd-exporter"]
+    networks:
+      - beegis_monitoring_network
+      - beegis_airflow_network
+      # - beegis_public_network # a voir
+    labels:
+      com.example.description: "Container using StatsD Exporter engine"
+      com.example.department: "BeeGis"
+
+
+
+  node_exporter:
+    image: prom/node-exporter
+    container_name: node_exporter
+    ports:
+      - "9100:9100"
+    profiles: ["monitoring", "node-exporter"]
+    networks:
+      - beegis_monitoring_network
+    labels:
+      com.example.description: "Container using Node Exporter engine"
+      com.example.department: "BeeGis"
+
+
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.44.0
+    container_name: cadvisor
+    ports:
+      - "8081:8080"  # Changement du port hôte de 8080 à 8081
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - beegis_monitoring_network
+    restart: unless-stopped
+    profiles: ["monitoring", "cadvisor"]
+    labels:
+      com.example.description: "Container using cAdvisor engine"
+      com.example.department: "BeeGis"
+
+
+  #---------------------- METADATA & DOCKER OBJECTS ----------------------#
+
+
+networks:
+  beegis_critical_data_transit_network:
+    external: true
+    name: beegis_critical_data_transit_network
+    driver: bridge
+  beegis_public_network:
+    external: true
+    name: beegis_public_network
+    driver: bridge
+  beegis_airflow_network:
+    external: true
+    name: beegis_airflow_network
+    driver: bridge
+  beegis_monitoring_network:
+    external: true
+    name: beegis_monitoring_network
+    driver: bridge
+
+
+
+volumes:
+  logs_directory_volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${LOGS_DIRECTORY}
+      o: bind
+  postgres_data_volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${POSTGRES_DATA_DIRECTORY}
+      o: bind
+  mongodb_data_volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${MONGODB_DATA_DIRECTORY}
+      o: bind
+  airflow-postgres-volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${AIRFLOW_DATA_DIRECTORY}
+      o: bind
+  mlflow-data-volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${MLFLOW_DATA_DIRECTORY}
+      o: bind
+  raw_data_volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${DATA_RAW_DIRECTORY}
+      o: bind
+  processing_data_volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${DATA_PROCESSING_DIRECTORY}
+      o: bind
+  cleaned_data_volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${DATA_CLEANED_DIRECTORY}
+      o: bind
+  segmentation_data_volume:
+      driver: local
+      driver_opts:
+        type: none
+        device: ${SEGMENTATION_MODELS_DIRECTORY}
+        o: bind
+  archives_data_volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${DATA_ARCHIVES_DIRECTORY}
+      o: bind
+
+
+secrets:
+  JWT_secret_key:
+    file: ${API_SECRETS_DIRECTORY}/JWT_SECRET_KEY
+    labels:
+      - "com.example.description: JWT secret key for encoding algorithm - API"
+  postgres_api_password:
+    file: ${API_SECRETS_DIRECTORY}/POSTGRES_API_PASSWORD
+    labels:
+      - "com.example.description: Postgres password credential for API"
+  mongodb_api_password:
+    file: ${API_SECRETS_DIRECTORY}/MONGODB_API_PASSWORD
+    labels:
+      - "com.example.description: MONGODB password credential for API"
+  postgres_password:
+    file: ${POSTGRES_SECRETS_DIRECTORY}/POSTGRES_PASSWORD
+    labels:
+      - "com.example.description: Postgres password credential"
+  postgres_exporter_password:
+    file: ${POSTGRES_EXPORTER_SECRETS_DIRECTORY}/POSTGRES_PASSWORD
+    labels:
+      - "com.example.description: Postgres password credential"
+  mongodb_password:
+    file: ${MONGODB_SECRETS_DIRECTORY}/MONGO_INITDB_ROOT_PASSWORD
+    labels:
+      - "com.example.description: MONGODB password credential"
+  airflow_webserver_password:
+    file: ${AIRFLOW_SECRETS_DIRECTORY}/_AIRFLOW_WWW_USER_PASSWORD
+    labels:
+      - "com.example.description: Airflow webserver password credential"
+  beegi_api_password:
+    file: ${BEEGIS_SECRETS_DIRECTORY}/UI_API_PASSWORD
+    labels:
+      - "com.example.description: Beegis API password credential"

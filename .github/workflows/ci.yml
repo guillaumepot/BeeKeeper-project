@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - 'build-*'
+
+jobs:
+  API_unit_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.12
+      - name: Install dependencies
+        run: |
+          cd ${{ github.workspace }}/src/api
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+      - name: Run tests
+        run: |
+          cd ${{ github.workspace }}/src/api/code
+          export PYTHONPATH=$(pwd)
+          pytest -v ./unit_tests
+
+  api_image_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Log in to Docker Hub
+        run: echo ${{ secrets.CI_REGISTRY_PASSWORD_WRITE }} | docker login -u ${{ secrets.CI_REGISTRY_USER_WRITE }} --password-stdin ${{ secrets.CI_REGISTRY }}
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ secrets.CI_REGISTRY_IMAGE }}/beem-api:latest -f src/api/Dockerfile src/api
+          docker push ${{ secrets.CI_REGISTRY_IMAGE }}/beem-api:latest
+
+  airflow_image_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Log in to Docker Hub
+        run: echo ${{ secrets.CI_REGISTRY_PASSWORD }} | docker login -u ${{ secrets.CI_REGISTRY_USER }} --password-stdin ${{ secrets.CI_REGISTRY }}
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ secrets.CI_REGISTRY_IMAGE }}/beem-airflow:latest -f src/airflow/Dockerfile src/airflow
+          docker push ${{ secrets.CI_REGISTRY_IMAGE }}/beem-airflow:latest
+
+  beegis_image_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Log in to Docker Hub
+        run: echo ${{ secrets.CI_REGISTRY_PASSWORD }} | docker login -u ${{ secrets.CI_REGISTRY_USER }} --password-stdin ${{ secrets.CI_REGISTRY }}
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ secrets.CI_REGISTRY_IMAGE }}/beegis:latest -f src/beegis/Dockerfile src/beegis
+          docker push ${{ secrets.CI_REGISTRY_IMAGE }}/beegis:latest
+
+  mlflow_tracking_image_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Log in to Docker Hub
+        run: echo ${{ secrets.CI_REGISTRY_PASSWORD }} | docker login -u ${{ secrets.CI_REGISTRY_USER }} --password-stdin ${{ secrets.CI_REGISTRY }}
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ secrets.CI_REGISTRY_IMAGE }}/beem-mlflow-tracking:latest -f src/mlflow/Dockerfile src/mlflow
+          docker push ${{ secrets.CI_REGISTRY_IMAGE }}/beem-mlflow-tracking:latest
+
+  deploy_job:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy application
+        run: echo "[TEST MESSAGE] Deploying application..."

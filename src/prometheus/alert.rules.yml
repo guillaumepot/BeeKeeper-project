@@ -1,0 +1,28 @@
+groups:
+  - name: db-alerts
+    rules:
+      # Alerte : MongoDB Status
+      - alert: MongoDBStatus
+        expr: mongodb_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MongoDB Status"
+          description_firing: |
+            :zap: L'instance MongoDB ({{ $labels.instance }}, job={{ $labels.job }}) est hors ligne ou inaccessible depuis plus d'une minute.
+          description_resolved: |
+            :white_check_mark: L'instance MongoDB ({{ $labels.instance }}, job={{ $labels.job }}) est de nouveau en ligne après une période d'indisponibilité.
+
+      # Alerte : PostgreSQL Status
+      - alert: PostgresStatus
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL Status"
+          description_firing: |
+            :zap: Le serveur PostgreSQL ({{ $labels.instance }}, job={{ $labels.job }}) est inaccessible depuis plus d'une minute.
+          description_resolved: |
+            :white_check_mark: Le serveur PostgreSQL ({{ $labels.instance }}, job={{ $labels.job }}) est de nouveau en ligne après une période d'indisponibilité.

@@ -1,0 +1,27 @@
+## Python dirs & files
+# ignore Pytest cache
+.pytest_cache/
+# Ignore pycache folders
+__pycache__/
+# vscode dirs & files
+.vscode/
+# Ignore  data source folder
+data/*
+# Ignore test dev secrets
+utils/secrets/*
+# Ignore Airflow misc files
+src/airflow/code/logs/*
+airflow-webserver.pid
+webserver_config.py
+airflow.cfg
+# Ignore open meteo default data cache
+.cache.sqlite
+
+## File Extensions
+*.log
+*.csv
+*.env
+*.parquet
+
+
+
