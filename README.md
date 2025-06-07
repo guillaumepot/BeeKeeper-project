@@ -131,8 +131,8 @@ Get BeeKeeper running in under 5 minutes:
 ### Prerequisites
 
 - **Docker** 20.10+ & **Docker Compose** 2.0+
-- **Linux/Unix** environment (tested on Ubuntu 20.04+)
-- **8GB RAM** minimum (16GB recommended)
+- **Linux/Unix** environment (tested on Ubuntu 20.04 LTS)
+- **4GB RAM** minimum (8GB recommended if all the configuration is running on a single server)
 - **20GB** free disk space
 
 ### 1️⃣ Clone & Initialize
