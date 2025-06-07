@@ -644,9 +644,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 | Author | Role | Contact |
 |--------|------|---------|
-| **Alexandre Dangléant** | Lead Developer | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/alexandre-dangl%C3%A9ant-062014148/) |
-| **Julien Landouar** | Data Engineer | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/julien-landouar/) [![GitHub](https://img.shields.io/badge/GitHub-222222?style=flat&logo=github&logoColor=white)](https://github.com/dixse-pt) |
-| **Guillaume Pot** | ML Engineer | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/062guillaumepot/) [![GitHub](https://img.shields.io/badge/GitHub-222222?style=flat&logo=github&logoColor=white)](https://github.com/guillaumepot) |
+| **Alexandre Dangléant** | Data Engineer | Client coordinator | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/alexandre-dangl%C3%A9ant-062014148/) |
+| **Julien Landouar** | Data Engineer | DevOps | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/julien-landouar/) [![GitHub](https://img.shields.io/badge/GitHub-222222?style=flat&logo=github&logoColor=white)](https://github.com/dixse-pt) |
+| **Guillaume Pot** | Data Engineer | Project Manager | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/062guillaumepot/) [![GitHub](https://img.shields.io/badge/GitHub-222222?style=flat&logo=github&logoColor=white)](https://github.com/guillaumepot) |
 
 </div>
 
